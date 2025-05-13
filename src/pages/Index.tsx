@@ -1,102 +1,175 @@
 
-import { useState, useEffect } from 'react';
-import { fetchWeatherData } from '@/services/weatherAPI';
-import { WeatherData } from '@/types/weather';
-import SearchCity from '@/components/SearchCity';
-import CurrentWeather from '@/components/CurrentWeather';
-import DailyForecast from '@/components/DailyForecast';
+import React, { useState, useEffect } from 'react';
+import { ChatSession } from '@/types/chat';
+import { 
+  createChatSession, 
+  sendMessage, 
+  deleteChatSession,
+  changeModel,
+  clearMessages
+} from '@/services/chatService';
+import ChatSidebar from '@/components/ChatSidebar';
+import ChatBox from '@/components/ChatBox';
 import { Button } from '@/components/ui/button';
 import Icon from '@/components/ui/icon';
+import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 
 const Index = () => {
-  const [weatherData, setWeatherData] = useState<WeatherData | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string | null>(null);
-  const [city, setCity] = useState<string>('Москва');
+  const [sessions, setSessions] = useState<ChatSession[]>([]);
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   
+  // Инициализация приложения
   useEffect(() => {
-    const getWeatherData = async () => {
-      setLoading(true);
-      setError(null);
-      
-      try {
-        const data = await fetchWeatherData(city);
-        setWeatherData(data);
-      } catch (err) {
-        setError('Не удалось загрузить данные о погоде. Пожалуйста, попробуйте позже.');
-        console.error(err);
-      } finally {
-        setLoading(false);
-      }
-    };
-    
-    getWeatherData();
-  }, [city]);
+    // Если нет сессий, создаем первую
+    if (sessions.length === 0) {
+      const newSession = createChatSession();
+      setSessions([newSession]);
+      setCurrentSessionId(newSession.id);
+    }
+  }, [sessions.length]);
   
-  const handleCitySelect = (selectedCity: string) => {
-    setCity(selectedCity);
+  // Текущая сессия
+  const currentSession = sessions.find(s => s.id === currentSessionId) || null;
+  
+  // Обработчики действий
+  
+  const handleNewChat = () => {
+    const newSession = createChatSession();
+    setSessions(prev => [...prev, newSession]);
+    setCurrentSessionId(newSession.id);
+    setIsMobileMenuOpen(false);
   };
   
-  const refreshWeather = () => {
-    if (city) {
-      setLoading(true);
-      fetchWeatherData(city)
-        .then(data => {
-          setWeatherData(data);
-          setLoading(false);
-        })
-        .catch(err => {
-          setError('Не удалось обновить данные о погоде.');
-          setLoading(false);
-          console.error(err);
-        });
+  const handleSessionSelect = (sessionId: string) => {
+    setCurrentSessionId(sessionId);
+    setIsMobileMenuOpen(false);
+  };
+  
+  const handleDeleteSession = (sessionId: string) => {
+    const updatedSessions = deleteChatSession(sessions, sessionId);
+    setSessions(updatedSessions);
+    
+    // Если удалили текущую сессию, выбираем другую
+    if (sessionId === currentSessionId) {
+      setCurrentSessionId(updatedSessions.length > 0 ? updatedSessions[0].id : null);
+      
+      // Если сессий не осталось, создаем новую
+      if (updatedSessions.length === 0) {
+        handleNewChat();
+      }
     }
   };
   
+  const handleSendMessage = async (content: string) => {
+    if (!currentSession) return;
+    
+    setIsLoading(true);
+    
+    try {
+      const updatedSession = await sendMessage(currentSession, content);
+      
+      // Обновляем сессию в списке сессий
+      setSessions(prev => 
+        prev.map(session => 
+          session.id === updatedSession.id ? updatedSession : session
+        )
+      );
+    } catch (error) {
+      console.error("Error sending message:", error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+  
+  const handleChangeModel = (modelId: string) => {
+    if (!currentSession) return;
+    
+    const updatedSession = changeModel(currentSession, modelId);
+    
+    setSessions(prev => 
+      prev.map(session => 
+        session.id === updatedSession.id ? updatedSession : session
+      )
+    );
+  };
+  
+  const handleClearMessages = () => {
+    if (!currentSession) return;
+    
+    const updatedSession = clearMessages(currentSession);
+    
+    setSessions(prev => 
+      prev.map(session => 
+        session.id === updatedSession.id ? updatedSession : session
+      )
+    );
+  };
+  
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-100 to-purple-100 py-8 px-4">
-      <div className="max-w-5xl mx-auto">
-        <header className="mb-8 text-center">
-          <h1 className="text-4xl font-bold mb-2 text-blue-800">Прогноз погоды</h1>
-          <p className="text-gray-600 mb-6">Узнайте текущую погоду и прогноз на неделю</p>
+    <div className="flex h-screen bg-background">
+      {/* Боковая панель для десктопа */}
+      <div className="hidden md:flex md:w-64 md:flex-shrink-0">
+        <ChatSidebar
+          sessions={sessions}
+          currentSessionId={currentSessionId}
+          onSessionSelect={handleSessionSelect}
+          onNewChat={handleNewChat}
+          onDeleteSession={handleDeleteSession}
+        />
+      </div>
+      
+      {/* Основной контент */}
+      <div className="flex flex-col flex-1">
+        {/* Мобильная шапка */}
+        <div className="md:hidden border-b p-2 flex items-center">
+          <Sheet open={isMobileMenuOpen} onOpenChange={setIsMobileMenuOpen}>
+            <SheetTrigger asChild>
+              <Button variant="ghost" size="icon">
+                <Icon name="Menu" />
+              </Button>
+            </SheetTrigger>
+            <SheetContent side="left" className="p-0">
+              <ChatSidebar
+                sessions={sessions}
+                currentSessionId={currentSessionId}
+                onSessionSelect={handleSessionSelect}
+                onNewChat={handleNewChat}
+                onDeleteSession={handleDeleteSession}
+              />
+            </SheetContent>
+          </Sheet>
           
-          <div className="flex flex-col sm:flex-row justify-center items-center gap-4">
-            <SearchCity onCitySelect={handleCitySelect} />
-            
-            <Button 
-              variant="outline" 
-              size="icon" 
-              className="bg-white/80 hover:bg-white"
-              onClick={refreshWeather}
-            >
-              <Icon name="RefreshCw" className="h-5 w-5 text-blue-600" />
-              <span className="sr-only">Обновить</span>
-            </Button>
+          <div className="flex-1 mx-2 text-center font-medium truncate">
+            {currentSession?.title || 'AI Чат'}
           </div>
-        </header>
+          
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={handleNewChat}
+          >
+            <Icon name="Plus" />
+          </Button>
+        </div>
         
-        <main className="space-y-6 animate-in fade-in-50 duration-500">
-          {loading ? (
-            <div className="flex justify-center items-center h-40">
-              <div className="animate-spin">
-                <Icon name="Loader2" size={48} className="text-blue-600" />
-              </div>
+        {/* Область чата */}
+        <div className="flex-1 overflow-hidden">
+          {currentSession ? (
+            <ChatBox
+              session={currentSession}
+              onSendMessage={handleSendMessage}
+              onChangeModel={handleChangeModel}
+              onClearMessages={handleClearMessages}
+              isLoading={isLoading}
+            />
+          ) : (
+            <div className="flex items-center justify-center h-full">
+              <Button onClick={handleNewChat}>Создать новый чат</Button>
             </div>
-          ) : error ? (
-            <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">
-              <p>{error}</p>
-            </div>
-          ) : weatherData ? (
-            <>
-              <CurrentWeather data={weatherData.current} />
-              <DailyForecast data={weatherData.daily} />
-            </>
-          ) : null}
-        </main>
-        
-        <footer className="mt-12 text-center text-gray-500 text-sm">
-          <p>© 2025 Прогноз погоды | Все данные о погоде предоставлены для демонстрации</p>
-        </footer>
+          )}
+        </div>
       </div>
     </div>
   );
